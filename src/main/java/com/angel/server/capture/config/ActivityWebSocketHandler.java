@@ -3,6 +3,7 @@ package com.angel.server.capture.config;
 import com.angel.server.capture.model.ActivityDetection;
 import com.angel.server.capture.service.ActivityDetectionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,8 +31,13 @@ public class ActivityWebSocketHandler implements WebSocketHandler {
 
     @PostConstruct
     public void initialize() {
+        // Configurer ObjectMapper pour les dates
+        objectMapper.registerModule(new JavaTimeModule());
+        
         // S'abonner aux détections d'activité
-        activityDetectionService.addDetectionListener(this::broadcastDetection);
+        if (activityDetectionService != null) {
+            activityDetectionService.addDetectionListener(this::broadcastDetection);
+        }
     }
 
     @Override
@@ -40,9 +46,11 @@ public class ActivityWebSocketHandler implements WebSocketHandler {
         logger.info("Nouvelle connexion WebSocket pour les activités: {}", session.getId());
 
         // Envoyer la dernière détection si disponible
-        ActivityDetection lastDetection = activityDetectionService.getLastDetection();
-        if (lastDetection != null) {
-            sendDetection(session, lastDetection);
+        if (activityDetectionService != null) {
+            ActivityDetection lastDetection = activityDetectionService.getLastDetection();
+            if (lastDetection != null) {
+                sendDetection(session, lastDetection);
+            }
         }
     }
 
@@ -74,7 +82,7 @@ public class ActivityWebSocketHandler implements WebSocketHandler {
      * Diffuse une détection à tous les clients connectés
      */
     private void broadcastDetection(ActivityDetection detection) {
-        if (sessions.isEmpty()) {
+        if (sessions.isEmpty() || detection == null) {
             return;
         }
 
@@ -106,7 +114,7 @@ public class ActivityWebSocketHandler implements WebSocketHandler {
      */
     private void sendDetection(WebSocketSession session, ActivityDetection detection) {
         try {
-            if (session.isOpen()) {
+            if (session.isOpen() && detection != null) {
                 String message = objectMapper.writeValueAsString(detection);
                 session.sendMessage(new TextMessage(message));
             }
