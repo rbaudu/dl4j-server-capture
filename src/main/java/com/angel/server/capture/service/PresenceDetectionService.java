@@ -48,6 +48,12 @@ public class PresenceDetectionService {
     @Value("${detection.presence.image.height:101}")
     private int imageHeight;
 
+    @Value("${detection.presence.normalization:standard}")
+    private String normalizationType;
+
+    @Value("${debug.presence.enabled:false}")
+    private boolean debugEnabled;
+
     // Statistiques
     private int totalDetections = 0;
     private int successfulDetections = 0;
@@ -63,6 +69,8 @@ public class PresenceDetectionService {
         logger.info("Seuil de confiance configuré: {}", confidenceThreshold);
         logger.info("Modèle par défaut: {}", defaultPresenceModel);
         logger.info("Dimensions d'image pour présence: {}x{}", imageWidth, imageHeight);
+        logger.info("Type de normalisation: {}", normalizationType);
+        logger.info("Debug activé: {}", debugEnabled);
         logger.info("Service de détection de présence initialisé");
     }
 
@@ -86,21 +94,32 @@ public class PresenceDetectionService {
                 return Optional.empty();
             }
 
-         // Utiliser le service de preprocessing spécialisé
-            INDArray input = preprocessingService.preprocessForPresenceDetection(image);
+            // Utiliser le service de preprocessing spécialisé avec la normalisation configurée
+            INDArray input = preprocessingService.preprocessWithNormalization(image, normalizationType);
             if (input == null) {
                 logger.error("Échec du preprocessing de l'image");
                 return Optional.empty();
             }
             
-            logger.debug("Input shape pour détection de présence: {}", 
-                        Arrays.toString(input.shape()));
+            if (debugEnabled) {
+                logger.debug("Input shape pour détection de présence: {}", 
+                            Arrays.toString(input.shape()));
+                logger.debug("Input stats - Min: {:.3f}, Max: {:.3f}, Mean: {:.3f}", 
+                           input.minNumber().floatValue(),
+                           input.maxNumber().floatValue(),
+                           input.meanNumber().floatValue());
+            }
             
-            // Vérifier que les dimensions correspondent
-            long[] expectedShape = {1, 64, imageHeight, imageWidth};
+            // Vérifier que les dimensions correspondent (3 canaux RGB maintenant)
+            long[] expectedShape = {1, 3, imageHeight, imageWidth};
             if (!Arrays.equals(input.shape(), expectedShape)) {
                 logger.error("Dimensions d'entrée incorrectes. Attendu: {}, Reçu: {}", 
                            Arrays.toString(expectedShape), Arrays.toString(input.shape()));
+                
+                // Debug supplémentaire en cas de problème
+                if (debugEnabled) {
+                    preprocessingService.debugPreprocessing(image);
+                }
                 return Optional.empty();
             }
 
@@ -110,15 +129,19 @@ public class PresenceDetectionService {
             // Interpréter les résultats (Class0 = absence, Class1 = présence)
             double[] predictions = output.toDoubleVector();
             
-            logger.debug("Prédictions brutes: {}", java.util.Arrays.toString(predictions));
+            if (debugEnabled) {
+                logger.debug("Prédictions brutes: {}", Arrays.toString(predictions));
+            }
             
             // Pour un modèle binaire, on s'attend à 2 classes
             if (predictions.length >= 2) {
                 double absenceConfidence = predictions[0];  // Class0
                 double presenceConfidence = predictions[1]; // Class1
                 
-                logger.debug("Prédictions - Absence: {:.3f}, Présence: {:.3f}", 
-                           absenceConfidence, presenceConfidence);
+                if (debugEnabled) {
+                    logger.debug("Prédictions - Absence: {:.3f}, Présence: {:.3f}", 
+                               absenceConfidence, presenceConfidence);
+                }
                 
                 // Si la confiance de présence dépasse le seuil
                 if (presenceConfidence >= confidenceThreshold) {
@@ -136,43 +159,75 @@ public class PresenceDetectionService {
             }
 
         } catch (Exception e) {
-            logger.error("Erreur lors de la détection de présence: {}", e.getMessage());
+            logger.error("Erreur lors de la détection de présence: {}", e.getMessage(), e);
+            
+            // Debug supplémentaire en cas d'erreur
+            if (debugEnabled) {
+                logger.error("Stack trace complète:", e);
+                try {
+                    preprocessingService.debugPreprocessing(image);
+                } catch (Exception debugException) {
+                    logger.error("Erreur lors du debug: {}", debugException.getMessage());
+                }
+            }
             return Optional.empty();
         }
     }
 
     /**
-     * Teste différents modèles de présence et retourne le meilleur résultat
+     * Teste différents modèles et types de normalisation
      */
     public Optional<Double> detectPresenceWithBestModel(BufferedImage image) {
         if (!"presence".equalsIgnoreCase(personDetectionType)) {
             return Optional.empty();
         }
 
-        // Tester d'abord le modèle par défaut
+        // Tester d'abord le modèle par défaut avec la normalisation configurée
         Optional<Double> defaultResult = detectPresence(image);
         if (defaultResult.isPresent()) {
             return defaultResult;
         }
 
-        // Si le modèle par défaut ne détecte rien, essayer l'autre modèle
+        // Si échec, tester différentes normalisations
+        String[] normalizationTypes = {"standard", "normalized", "imagenet"};
+        for (String normType : normalizationTypes) {
+            if (!normType.equals(normalizationType)) {
+                try {
+                    logger.debug("Test avec normalisation: {}", normType);
+                    Optional<Double> result = detectPresenceWithNormalization(image, normType);
+                    if (result.isPresent()) {
+                        logger.info("Détection réussie avec normalisation alternative: {}", normType);
+                        return result;
+                    }
+                } catch (Exception e) {
+                    logger.debug("Erreur avec normalisation {}: {}", normType, e.getMessage());
+                }
+            }
+        }
+
+        // Si toujours pas de résultat, essayer l'autre modèle
         try {
             String alternativeModel = "standard".equals(defaultPresenceModel) ? "yolo" : "standard";
             MultiLayerNetwork alternativePresenceModel = modelService.getPresenceModel(alternativeModel);
             
             if (alternativePresenceModel != null) {
-                BufferedImage preprocessed = preprocessImage(image);
-                INDArray input = imageToINDArray(preprocessed);
-                INDArray output = alternativePresenceModel.output(input);
+                logger.debug("Test avec modèle alternatif: {}", alternativeModel);
                 
-                double[] predictions = output.toDoubleVector();
-                if (predictions.length >= 2) {
-                    double presenceConfidence = predictions[1]; // Class1
-                    
-                    if (presenceConfidence >= confidenceThreshold) {
-                        logger.debug("Personne détectée avec modèle alternatif {} (confiance: {:.3f})", 
-                                   alternativeModel, presenceConfidence);
-                        return Optional.of(presenceConfidence);
+                for (String normType : normalizationTypes) {
+                    INDArray input = preprocessingService.preprocessWithNormalization(image, normType);
+                    if (input != null) {
+                        INDArray output = alternativePresenceModel.output(input);
+                        double[] predictions = output.toDoubleVector();
+                        
+                        if (predictions.length >= 2) {
+                            double presenceConfidence = predictions[1]; // Class1
+                            
+                            if (presenceConfidence >= confidenceThreshold) {
+                                logger.info("Personne détectée avec modèle alternatif {} et normalisation {} (confiance: {:.3f})", 
+                                           alternativeModel, normType, presenceConfidence);
+                                return Optional.of(presenceConfidence);
+                            }
+                        }
                     }
                 }
             }
@@ -184,7 +239,39 @@ public class PresenceDetectionService {
     }
 
     /**
-     * Préprocesse une image pour la détection de présence
+     * Détection avec un type de normalisation spécifique
+     */
+    private Optional<Double> detectPresenceWithNormalization(BufferedImage image, String normType) {
+        try {
+            MultiLayerNetwork presenceModel = modelService.getDefaultPresenceModel();
+            if (presenceModel == null) {
+                return Optional.empty();
+            }
+
+            INDArray input = preprocessingService.preprocessWithNormalization(image, normType);
+            if (input == null) {
+                return Optional.empty();
+            }
+
+            INDArray output = presenceModel.output(input);
+            double[] predictions = output.toDoubleVector();
+
+            if (predictions.length >= 2) {
+                double presenceConfidence = predictions[1];
+                if (presenceConfidence >= confidenceThreshold) {
+                    return Optional.of(presenceConfidence);
+                }
+            }
+
+            return Optional.empty();
+        } catch (Exception e) {
+            logger.debug("Erreur avec normalisation {}: {}", normType, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Préprocesse une image pour la détection de présence (méthode legacy)
      */
     private BufferedImage preprocessImage(BufferedImage original) {
         // Redimensionner à la taille exacte attendue par le modèle de présence
@@ -199,7 +286,7 @@ public class PresenceDetectionService {
     }
 
     /**
-     * Convertit une image en INDArray pour DL4J
+     * Convertit une image en INDArray pour DL4J (méthode legacy)
      */
     private INDArray imageToINDArray(BufferedImage image) {
         int width = image.getWidth();
@@ -244,6 +331,8 @@ public class PresenceDetectionService {
             (double) successfulDetections / totalDetections : 0.0);
         stats.put("confidence_threshold", confidenceThreshold);
         stats.put("image_dimensions", imageWidth + "x" + imageHeight);
+        stats.put("normalization_type", normalizationType);
+        stats.put("debug_enabled", debugEnabled);
         
         // Vérifier la disponibilité des modèles
         Map<String, Boolean> modelAvailability = new HashMap<>();
@@ -260,6 +349,22 @@ public class PresenceDetectionService {
     public void updateConfidenceThreshold(double newThreshold) {
         this.confidenceThreshold = newThreshold;
         logger.info("Seuil de confiance de présence mis à jour: {}", newThreshold);
+    }
+
+    /**
+     * Met à jour le type de normalisation
+     */
+    public void updateNormalizationType(String newNormalizationType) {
+        this.normalizationType = newNormalizationType;
+        logger.info("Type de normalisation mis à jour: {}", newNormalizationType);
+    }
+
+    /**
+     * Active/désactive le mode debug
+     */
+    public void setDebugEnabled(boolean enabled) {
+        this.debugEnabled = enabled;
+        logger.info("Mode debug {}", enabled ? "activé" : "désactivé");
     }
 
     /**
