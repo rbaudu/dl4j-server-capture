@@ -27,4 +27,234 @@ public class ModelService {
     private static final Logger logger = LoggerFactory.getLogger(ModelService.class);
 
     // Configuration des modèles depuis application.properties
-    @Value(\"${models.directory}\")\n    private String modelsDirectory;\n\n    @Value(\"${models.activity.image.standard.path}\")\n    private String activityImageStandardPath;\n\n    @Value(\"${models.activity.image.vgg16.path}\")\n    private String activityImageVgg16Path;\n\n    @Value(\"${models.activity.image.resnet.path}\")\n    private String activityImageResnetPath;\n\n    @Value(\"${models.activity.sound.standard.path}\")\n    private String activitySoundStandardPath;\n\n    @Value(\"${models.activity.sound.spectrogram.path}\")\n    private String activitySoundSpectrogramPath;\n\n    @Value(\"${models.activity.sound.mfcc.path}\")\n    private String activitySoundMfccPath;\n\n    @Value(\"${models.activity.image.default}\")\n    private String defaultImageModel;\n\n    @Value(\"${models.activity.sound.default}\")\n    private String defaultSoundModel;\n\n    @Value(\"${models.facenet.enabled}\")\n    private boolean faceNetEnabled;\n\n    @Value(\"${cache.models.enabled}\")\n    private boolean cacheEnabled;\n\n    // Cache des modèles chargés\n    private final Map<String, MultiLayerNetwork> modelCache = new ConcurrentHashMap<>();\n    private MultiLayerNetwork faceNetModel;\n\n    @PostConstruct\n    public void initializeModels() {\n        logger.info(\"Initialisation du service de modèles DL4J...\");\n        \n        // Créer le répertoire des modèles s'il n'existe pas\n        File modelsDir = new File(modelsDirectory);\n        if (!modelsDir.exists()) {\n            modelsDir.mkdirs();\n            logger.warn(\"Répertoire des modèles créé: {}\", modelsDirectory);\n        }\n        \n        // Initialiser FaceNet si activé\n        if (faceNetEnabled) {\n            initializeFaceNet();\n        }\n        \n        logger.info(\"Service de modèles initialisé\");\n    }\n\n    /**\n     * Charge le modèle d'activité pour les images\n     */\n    public MultiLayerNetwork getActivityImageModel(String modelType) {\n        String cacheKey = \"activity_image_\" + modelType;\n        \n        if (cacheEnabled && modelCache.containsKey(cacheKey)) {\n            return modelCache.get(cacheKey);\n        }\n        \n        String modelPath = getActivityImageModelPath(modelType);\n        MultiLayerNetwork model = loadModel(modelPath);\n        \n        if (cacheEnabled && model != null) {\n            modelCache.put(cacheKey, model);\n        }\n        \n        return model;\n    }\n\n    /**\n     * Charge le modèle d'activité pour les sons\n     */\n    public MultiLayerNetwork getActivitySoundModel(String modelType) {\n        String cacheKey = \"activity_sound_\" + modelType;\n        \n        if (cacheEnabled && modelCache.containsKey(cacheKey)) {\n            return modelCache.get(cacheKey);\n        }\n        \n        String modelPath = getActivitySoundModelPath(modelType);\n        MultiLayerNetwork model = loadModel(modelPath);\n        \n        if (cacheEnabled && model != null) {\n            modelCache.put(cacheKey, model);\n        }\n        \n        return model;\n    }\n\n    /**\n     * Retourne le modèle FaceNet pour la détection de personnes\n     */\n    public MultiLayerNetwork getFaceNetModel() {\n        return faceNetModel;\n    }\n\n    /**\n     * Charge un modèle depuis un fichier\n     */\n    private MultiLayerNetwork loadModel(String modelPath) {\n        try {\n            File modelFile = new File(modelPath);\n            if (!modelFile.exists()) {\n                logger.error(\"Fichier modèle non trouvé: {}\", modelPath);\n                return null;\n            }\n            \n            logger.info(\"Chargement du modèle: {}\", modelPath);\n            MultiLayerNetwork model = ModelSerializer.restoreMultiLayerNetwork(modelFile);\n            logger.info(\"Modèle chargé avec succès: {}\", modelPath);\n            \n            return model;\n        } catch (Exception e) {\n            logger.error(\"Erreur lors du chargement du modèle {}: {}\", modelPath, e.getMessage());\n            return null;\n        }\n    }\n\n    /**\n     * Initialise le modèle FaceNet depuis le Zoo DL4J\n     */\n    private void initializeFaceNet() {\n        try {\n            logger.info(\"Initialisation de FaceNet...\");\n            ZooModel zooModel = FaceNetNN4Small2.builder().build();\n            faceNetModel = (MultiLayerNetwork) zooModel.initPretrained(PretrainedType.IMAGENET);\n            logger.info(\"FaceNet initialisé avec succès\");\n        } catch (Exception e) {\n            logger.error(\"Erreur lors de l'initialisation de FaceNet: {}\", e.getMessage());\n            faceNetEnabled = false;\n        }\n    }\n\n    /**\n     * Retourne le chemin du modèle d'activité pour les images\n     */\n    private String getActivityImageModelPath(String modelType) {\n        switch (modelType.toLowerCase()) {\n            case \"vgg16\":\n                return activityImageVgg16Path;\n            case \"resnet\":\n                return activityImageResnetPath;\n            case \"standard\":\n            default:\n                return activityImageStandardPath;\n        }\n    }\n\n    /**\n     * Retourne le chemin du modèle d'activité pour les sons\n     */\n    private String getActivitySoundModelPath(String modelType) {\n        switch (modelType.toLowerCase()) {\n            case \"mfcc\":\n                return activitySoundMfccPath;\n            case \"spectrogram\":\n                return activitySoundSpectrogramPath;\n            case \"standard\":\n            default:\n                return activitySoundStandardPath;\n        }\n    }\n\n    /**\n     * Retourne le modèle d'image par défaut\n     */\n    public MultiLayerNetwork getDefaultActivityImageModel() {\n        return getActivityImageModel(defaultImageModel);\n    }\n\n    /**\n     * Retourne le modèle de son par défaut\n     */\n    public MultiLayerNetwork getDefaultActivitySoundModel() {\n        return getActivitySoundModel(defaultSoundModel);\n    }\n\n    /**\n     * Vérifie si un modèle est disponible\n     */\n    public boolean isModelAvailable(String modelType, String category) {\n        String modelPath;\n        if (\"image\".equals(category)) {\n            modelPath = getActivityImageModelPath(modelType);\n        } else if (\"sound\".equals(category)) {\n            modelPath = getActivitySoundModelPath(modelType);\n        } else {\n            return false;\n        }\n        \n        return new File(modelPath).exists();\n    }\n\n    /**\n     * Retourne les statistiques des modèles chargés\n     */\n    public Map<String, Object> getModelStats() {\n        Map<String, Object> stats = new HashMap<>();\n        stats.put(\"cache_enabled\", cacheEnabled);\n        stats.put(\"cached_models_count\", modelCache.size());\n        stats.put(\"facenet_enabled\", faceNetEnabled);\n        stats.put(\"facenet_loaded\", faceNetModel != null);\n        \n        Map<String, Boolean> availability = new HashMap<>();\n        availability.put(\"activity_image_standard\", isModelAvailable(\"standard\", \"image\"));\n        availability.put(\"activity_image_vgg16\", isModelAvailable(\"vgg16\", \"image\"));\n        availability.put(\"activity_image_resnet\", isModelAvailable(\"resnet\", \"image\"));\n        availability.put(\"activity_sound_standard\", isModelAvailable(\"standard\", \"sound\"));\n        availability.put(\"activity_sound_spectrogram\", isModelAvailable(\"spectrogram\", \"sound\"));\n        availability.put(\"activity_sound_mfcc\", isModelAvailable(\"mfcc\", \"sound\"));\n        \n        stats.put(\"model_availability\", availability);\n        \n        return stats;\n    }\n\n    /**\n     * Vide le cache des modèles\n     */\n    public void clearCache() {\n        modelCache.clear();\n        logger.info(\"Cache des modèles vidé\");\n    }\n}
+    @Value("${models.directory}")
+    private String modelsDirectory;
+
+    @Value("${models.activity.image.standard.path}")
+    private String activityImageStandardPath;
+
+    @Value("${models.activity.image.vgg16.path}")
+    private String activityImageVgg16Path;
+
+    @Value("${models.activity.image.resnet.path}")
+    private String activityImageResnetPath;
+
+    @Value("${models.activity.sound.standard.path}")
+    private String activitySoundStandardPath;
+
+    @Value("${models.activity.sound.spectrogram.path}")
+    private String activitySoundSpectrogramPath;
+
+    @Value("${models.activity.sound.mfcc.path}")
+    private String activitySoundMfccPath;
+
+    @Value("${models.activity.image.default}")
+    private String defaultImageModel;
+
+    @Value("${models.activity.sound.default}")
+    private String defaultSoundModel;
+
+    @Value("${models.facenet.enabled}")
+    private boolean faceNetEnabled;
+
+    @Value("${cache.models.enabled}")
+    private boolean cacheEnabled;
+
+    // Cache des modèles chargés
+    private final Map<String, MultiLayerNetwork> modelCache = new ConcurrentHashMap<>();
+    private MultiLayerNetwork faceNetModel;
+
+    @PostConstruct
+    public void initializeModels() {
+        logger.info("Initialisation du service de modèles DL4J...");
+        
+        // Créer le répertoire des modèles s'il n'existe pas
+        File modelsDir = new File(modelsDirectory);
+        if (!modelsDir.exists()) {
+            modelsDir.mkdirs();
+            logger.warn("Répertoire des modèles créé: {}", modelsDirectory);
+        }
+        
+        // Initialiser FaceNet si activé
+        if (faceNetEnabled) {
+            initializeFaceNet();
+        }
+        
+        logger.info("Service de modèles initialisé");
+    }
+
+    /**
+     * Charge le modèle d'activité pour les images
+     */
+    public MultiLayerNetwork getActivityImageModel(String modelType) {
+        String cacheKey = "activity_image_" + modelType;
+        
+        if (cacheEnabled && modelCache.containsKey(cacheKey)) {
+            return modelCache.get(cacheKey);
+        }
+        
+        String modelPath = getActivityImageModelPath(modelType);
+        MultiLayerNetwork model = loadModel(modelPath);
+        
+        if (cacheEnabled && model != null) {
+            modelCache.put(cacheKey, model);
+        }
+        
+        return model;
+    }
+
+    /**
+     * Charge le modèle d'activité pour les sons
+     */
+    public MultiLayerNetwork getActivitySoundModel(String modelType) {
+        String cacheKey = "activity_sound_" + modelType;
+        
+        if (cacheEnabled && modelCache.containsKey(cacheKey)) {
+            return modelCache.get(cacheKey);
+        }
+        
+        String modelPath = getActivitySoundModelPath(modelType);
+        MultiLayerNetwork model = loadModel(modelPath);
+        
+        if (cacheEnabled && model != null) {
+            modelCache.put(cacheKey, model);
+        }
+        
+        return model;
+    }
+
+    /**
+     * Retourne le modèle FaceNet pour la détection de personnes
+     */
+    public MultiLayerNetwork getFaceNetModel() {
+        return faceNetModel;
+    }
+
+    /**
+     * Charge un modèle depuis un fichier
+     */
+    private MultiLayerNetwork loadModel(String modelPath) {
+        try {
+            File modelFile = new File(modelPath);
+            if (!modelFile.exists()) {
+                logger.error("Fichier modèle non trouvé: {}", modelPath);
+                return null;
+            }
+            
+            logger.info("Chargement du modèle: {}", modelPath);
+            MultiLayerNetwork model = ModelSerializer.restoreMultiLayerNetwork(modelFile);
+            logger.info("Modèle chargé avec succès: {}", modelPath);
+            
+            return model;
+        } catch (Exception e) {
+            logger.error("Erreur lors du chargement du modèle {}: {}", modelPath, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Initialise le modèle FaceNet depuis le Zoo DL4J
+     */
+    private void initializeFaceNet() {
+        try {
+            logger.info("Initialisation de FaceNet...");
+            ZooModel zooModel = FaceNetNN4Small2.builder().build();
+            faceNetModel = (MultiLayerNetwork) zooModel.initPretrained(PretrainedType.IMAGENET);
+            logger.info("FaceNet initialisé avec succès");
+        } catch (Exception e) {
+            logger.error("Erreur lors de l'initialisation de FaceNet: {}", e.getMessage());
+            faceNetEnabled = false;
+        }
+    }
+
+    /**
+     * Retourne le chemin du modèle d'activité pour les images
+     */
+    private String getActivityImageModelPath(String modelType) {
+        switch (modelType.toLowerCase()) {
+            case "vgg16":
+                return activityImageVgg16Path;
+            case "resnet":
+                return activityImageResnetPath;
+            case "standard":
+            default:
+                return activityImageStandardPath;
+        }
+    }
+
+    /**
+     * Retourne le chemin du modèle d'activité pour les sons
+     */
+    private String getActivitySoundModelPath(String modelType) {
+        switch (modelType.toLowerCase()) {
+            case "mfcc":
+                return activitySoundMfccPath;
+            case "spectrogram":
+                return activitySoundSpectrogramPath;
+            case "standard":
+            default:
+                return activitySoundStandardPath;
+        }
+    }
+
+    /**
+     * Retourne le modèle d'image par défaut
+     */
+    public MultiLayerNetwork getDefaultActivityImageModel() {
+        return getActivityImageModel(defaultImageModel);
+    }
+
+    /**
+     * Retourne le modèle de son par défaut
+     */
+    public MultiLayerNetwork getDefaultActivitySoundModel() {
+        return getActivitySoundModel(defaultSoundModel);
+    }
+
+    /**
+     * Vérifie si un modèle est disponible
+     */
+    public boolean isModelAvailable(String modelType, String category) {
+        String modelPath;
+        if ("image".equals(category)) {
+            modelPath = getActivityImageModelPath(modelType);
+        } else if ("sound".equals(category)) {
+            modelPath = getActivitySoundModelPath(modelType);
+        } else {
+            return false;
+        }
+        
+        return new File(modelPath).exists();
+    }
+
+    /**
+     * Retourne les statistiques des modèles chargés
+     */
+    public Map<String, Object> getModelStats() {
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("cache_enabled", cacheEnabled);
+        stats.put("cached_models_count", modelCache.size());
+        stats.put("facenet_enabled", faceNetEnabled);
+        stats.put("facenet_loaded", faceNetModel != null);
+        
+        Map<String, Boolean> availability = new HashMap<>();
+        availability.put("activity_image_standard", isModelAvailable("standard", "image"));
+        availability.put("activity_image_vgg16", isModelAvailable("vgg16", "image"));
+        availability.put("activity_image_resnet", isModelAvailable("resnet", "image"));
+        availability.put("activity_sound_standard", isModelAvailable("standard", "sound"));
+        availability.put("activity_sound_spectrogram", isModelAvailable("spectrogram", "sound"));
+        availability.put("activity_sound_mfcc", isModelAvailable("mfcc", "sound"));
+        
+        stats.put("model_availability", availability);
+        
+        return stats;
+    }
+
+    /**
+     * Vide le cache des modèles
+     */
+    public void clearCache() {
+        modelCache.clear();
+        logger.info("Cache des modèles vidé");
+    }
+}
