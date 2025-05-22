@@ -35,6 +35,9 @@ public class PresenceDetectionService {
     @Value("${models.presence.confidence.threshold}")
     private double confidenceThreshold;
 
+    @Value("${models.presence.default}")
+    private String defaultPresenceModel;
+
     @Value("${detection.image.width}")
     private int imageWidth;
 
@@ -54,6 +57,7 @@ public class PresenceDetectionService {
 
         logger.info("Initialisation du service de détection de présence...");
         logger.info("Seuil de confiance configuré: {}", confidenceThreshold);
+        logger.info("Modèle par défaut: {}", defaultPresenceModel);
         logger.info("Service de détection de présence initialisé");
     }
 
@@ -132,7 +136,7 @@ public class PresenceDetectionService {
 
         // Si le modèle par défaut ne détecte rien, essayer l'autre modèle
         try {
-            String alternativeModel = "standard".equals(modelService.getPresenceConfidenceThreshold()) ? "yolo" : "standard";
+            String alternativeModel = "standard".equals(defaultPresenceModel) ? "yolo" : "standard";
             MultiLayerNetwork alternativePresenceModel = modelService.getPresenceModel(alternativeModel);
             
             if (alternativePresenceModel != null) {
