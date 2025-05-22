@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.PostConstruct;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -24,6 +25,9 @@ import java.util.Optional;
 public class PresenceDetectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(PresenceDetectionService.class);
+
+    @Autowired
+    private ImagePreprocessingService preprocessingService;
 
     @Autowired
     private ModelService modelService;
@@ -82,11 +86,23 @@ public class PresenceDetectionService {
                 return Optional.empty();
             }
 
-            // Préprocesser l'image avec les bonnes dimensions
-            BufferedImage preprocessed = preprocessImage(image);
-            INDArray input = imageToINDArray(preprocessed);
-
-            logger.debug("Input shape pour détection de présence: {}", java.util.Arrays.toString(input.shape()));
+         // Utiliser le service de preprocessing spécialisé
+            INDArray input = preprocessingService.preprocessForPresenceDetection(image);
+            if (input == null) {
+                logger.error("Échec du preprocessing de l'image");
+                return Optional.empty();
+            }
+            
+            logger.debug("Input shape pour détection de présence: {}", 
+                        Arrays.toString(input.shape()));
+            
+            // Vérifier que les dimensions correspondent
+            long[] expectedShape = {1, 64, imageHeight, imageWidth};
+            if (!Arrays.equals(input.shape(), expectedShape)) {
+                logger.error("Dimensions d'entrée incorrectes. Attendu: {}, Reçu: {}", 
+                           Arrays.toString(expectedShape), Arrays.toString(input.shape()));
+                return Optional.empty();
+            }
 
             // Faire la prédiction
             INDArray output = presenceModel.output(input);

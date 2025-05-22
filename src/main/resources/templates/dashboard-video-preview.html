@@ -1,0 +1,76 @@
+<!-- dashboard-video-preview.html -->
+<div class="video-preview-container">
+    <div class="video-header">
+        <h3>Aperçu Vidéo en Temps Réel</h3>
+        <div class="video-controls">
+            <button id="toggle-video" class="btn btn-primary">Démarrer</button>
+            <span id="connection-status" class="status-indicator">Déconnecté</span>
+        </div>
+    </div>
+    
+    <div class="video-content">
+        <img id="video-preview" 
+             class="video-frame" 
+             alt="Aperçu vidéo" 
+             style="width: 100%; max-width: 640px; height: auto; border: 1px solid #ddd;">
+    </div>
+    
+    <div class="video-info">
+        <small class="text-muted">
+            FPS: <span id="fps-counter">0</span> | 
+            Résolution: <span id="resolution">--</span> |
+            Sources actives: <span id="active-sources">0</span>
+        </small>
+    </div>
+</div>
+
+<style>
+.video-preview-container {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.video-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.video-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-indicator {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.status-indicator.connected {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-indicator.disconnected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.video-frame {
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.video-info {
+    margin-top: 10px;
+    text-align: center;
+}
+</style>
+
+<script src="/js/video-stream.js"></script>

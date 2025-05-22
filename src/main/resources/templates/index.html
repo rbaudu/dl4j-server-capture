@@ -7,6 +7,72 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="/css/app.css" rel="stylesheet">
+    <style>
+        /* Styles pour l'aperçu vidéo */
+        .video-preview-container {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .video-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .status-indicator {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status-indicator.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .status-indicator.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-indicator.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-indicator.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .video-frame {
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+        }
+        
+        .video-info {
+            margin-top: 10px;
+            text-align: center;
+        }
+        
+        .video-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #e9ecef;
+            border: 2px dashed #6c757d;
+            border-radius: 4px;
+            min-height: 300px;
+            color: #6c757d;
+        }
+    </style>
 </head>
 <body>
     <!-- Navigation -->
@@ -39,7 +105,7 @@
                 <ul class="navbar-nav">
                     <li class="nav-item">
                         <span class="navbar-text">
-                            <span id="connection-status" class="badge bg-secondary">
+                            <span id="main-connection-status" class="badge bg-secondary">
                                 <i class="fas fa-circle"></i> Déconnecté
                             </span>
                         </span>
@@ -69,6 +135,9 @@
                                     </button>
                                     <button id="stop-capture" class="btn btn-danger" disabled>
                                         <i class="fas fa-stop me-1"></i>Arrêter la Capture
+                                    </button>
+                                    <button id="toggle-video-stream" class="btn btn-info">
+                                        <i class="fas fa-video me-1"></i>Connecter Stream
                                     </button>
                                 </div>
                             </div>
@@ -131,21 +200,45 @@
             </div>
         </div>
 
-        <!-- Aperçu vidéo -->
+        <!-- Aperçu vidéo - SECTION MISE À JOUR -->
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0">
-                            <i class="fas fa-camera me-2"></i>Aperçu Vidéo
-                        </h5>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="card-title mb-0">
+                                <i class="fas fa-camera me-2"></i>Aperçu Vidéo en Temps Réel
+                            </h5>
+                            <div class="video-controls">
+                                <span id="connection-status" class="status-indicator disconnected">Déconnecté</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body video-preview-container">
                         <div class="text-center">
-                            <canvas id="video-preview" width="640" height="480" 
-                                    class="border rounded" style="max-width: 100%; height: auto;">
-                                Votre navigateur ne supporte pas le canvas HTML5.
-                            </canvas>
+                            <!-- Image pour afficher le stream WebSocket -->
+                            <img id="video-preview" 
+                                 class="video-frame" 
+                                 alt="Aperçu vidéo" 
+                                 style="display: none; width: 100%; max-width: 640px; height: auto;">
+                            
+                            <!-- Placeholder quand pas de vidéo -->
+                            <div id="video-placeholder" class="video-placeholder">
+                                <div>
+                                    <i class="fas fa-video-slash fa-3x mb-3"></i>
+                                    <h5>Aucun flux vidéo</h5>
+                                    <p class="text-muted">Démarrez la capture pour voir l'aperçu</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Informations sur le stream -->
+                        <div class="video-info">
+                            <small class="text-muted">
+                                FPS: <span id="fps-counter">0</span> | 
+                                Résolution: <span id="resolution">--</span> |
+                                Sources actives: <span id="active-sources">0</span>
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -181,5 +274,245 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/js/app.js"></script>
     <script src="/js/dashboard.js"></script>
+    
+    <!-- Script pour le streaming vidéo WebSocket -->
+    <script>
+        // Gestionnaire de streaming vidéo WebSocket
+        class VideoStreamManager {
+            constructor(videoElementId, websocketUrl) {
+                this.videoElement = document.getElementById(videoElementId);
+                this.placeholderElement = document.getElementById('video-placeholder');
+                this.statusElement = document.getElementById('connection-status');
+                this.fpsElement = document.getElementById('fps-counter');
+                this.websocketUrl = websocketUrl;
+                this.websocket = null;
+                this.isConnected = false;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 3000;
+                
+                // FPS calculation
+                this.frameCount = 0;
+                this.lastFpsUpdate = Date.now();
+                this.currentFps = 0;
+                
+                // Heartbeat
+                this.heartbeatInterval = null;
+                this.heartbeatDelay = 30000; // 30 secondes
+            }
+            
+            connect() {
+                try {
+                    this.updateStatus('Connexion...', 'connecting');
+                    console.log('Connexion WebSocket à:', this.websocketUrl);
+                    
+                    this.websocket = new WebSocket(this.websocketUrl);
+                    
+                    this.websocket.onopen = () => {
+                        console.log('WebSocket connecté');
+                        this.isConnected = true;
+                        this.reconnectAttempts = 0;
+                        this.updateStatus('Connecté', 'connected');
+                        this.startHeartbeat();
+                    };
+                    
+                    this.websocket.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.handleMessage(message);
+                        } catch (e) {
+                            console.warn('Message WebSocket non-JSON:', event.data);
+                        }
+                    };
+                    
+                    this.websocket.onclose = (event) => {
+                        console.log('WebSocket fermé:', event.code, event.reason);
+                        this.isConnected = false;
+                        this.updateStatus('Déconnecté', 'disconnected');
+                        this.hideVideo();
+                        this.stopHeartbeat();
+                        this.attemptReconnect();
+                    };
+                    
+                    this.websocket.onerror = (error) => {
+                        console.error('Erreur WebSocket:', error);
+                        this.isConnected = false;
+                        this.updateStatus('Erreur', 'error');
+                        this.hideVideo();
+                    };
+                    
+                } catch (error) {
+                    console.error('Erreur lors de la création du WebSocket:', error);
+                    this.updateStatus('Erreur de connexion', 'error');
+                    this.attemptReconnect();
+                }
+            }
+            
+            handleMessage(message) {
+                switch (message.type) {
+                    case 'connected':
+                        console.log('Bienvenue:', message.message);
+                        break;
+                        
+                    case 'frame':
+                        this.displayFrame(message.data);
+                        this.updateFps();
+                        break;
+                        
+                    case 'status':
+                        console.log('Statut capture:', message.capturing);
+                        break;
+                }
+            }
+            
+            displayFrame(base64Data) {
+                if (this.videoElement) {
+                    this.videoElement.src = base64Data;
+                    this.videoElement.style.display = 'block';
+                    if (this.placeholderElement) {
+                        this.placeholderElement.style.display = 'none';
+                    }
+                }
+            }
+            
+            hideVideo() {
+                if (this.videoElement) {
+                    this.videoElement.style.display = 'none';
+                }
+                if (this.placeholderElement) {
+                    this.placeholderElement.style.display = 'flex';
+                }
+                if (this.fpsElement) {
+                    this.fpsElement.textContent = '0';
+                }
+            }
+            
+            updateFps() {
+                this.frameCount++;
+                const now = Date.now();
+                
+                if (now - this.lastFpsUpdate >= 1000) {
+                    this.currentFps = this.frameCount;
+                    this.frameCount = 0;
+                    this.lastFpsUpdate = now;
+                    
+                    if (this.fpsElement) {
+                        this.fpsElement.textContent = this.currentFps;
+                    }
+                }
+            }
+            
+            updateStatus(text, className) {
+                if (this.statusElement) {
+                    this.statusElement.textContent = text;
+                    this.statusElement.className = `status-indicator ${className}`;
+                }
+            }
+            
+            startHeartbeat() {
+                this.heartbeatInterval = setInterval(() => {
+                    if (this.isConnected && this.websocket.readyState === WebSocket.OPEN) {
+                        this.websocket.send('ping');
+                    }
+                }, this.heartbeatDelay);
+            }
+            
+            stopHeartbeat() {
+                if (this.heartbeatInterval) {
+                    clearInterval(this.heartbeatInterval);
+                    this.heartbeatInterval = null;
+                }
+            }
+            
+            attemptReconnect() {
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.reconnectAttempts++;
+                    const delay = this.reconnectDelay * this.reconnectAttempts;
+                    
+                    this.updateStatus(`Reconnexion ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`, 'connecting');
+                    console.log(`Reconnexion ${this.reconnectAttempts}/${this.maxReconnectAttempts} dans ${delay}ms`);
+                    
+                    setTimeout(() => {
+                        this.connect();
+                    }, delay);
+                } else {
+                    console.error('Impossible de se reconnecter');
+                    this.updateStatus('Connexion échouée', 'error');
+                }
+            }
+            
+            disconnect() {
+                this.stopHeartbeat();
+                if (this.websocket) {
+                    this.websocket.close();
+                    this.websocket = null;
+                    this.isConnected = false;
+                    this.updateStatus('Déconnecté', 'disconnected');
+                    this.hideVideo();
+                }
+            }
+            
+            get connected() {
+                return this.isConnected;
+            }
+        }
+
+        // Initialisation
+        document.addEventListener('DOMContentLoaded', function() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
+            
+            // Créer le gestionnaire de stream
+            const videoStream = new VideoStreamManager('video-preview', wsUrl);
+            
+            // Bouton de contrôle du stream
+            const toggleButton = document.getElementById('toggle-video-stream');
+            if (toggleButton) {
+                toggleButton.addEventListener('click', () => {
+                    if (videoStream.connected) {
+                        videoStream.disconnect();
+                        toggleButton.innerHTML = '<i class="fas fa-video me-1"></i>Connecter Stream';
+                        toggleButton.className = 'btn btn-info';
+                    } else {
+                        videoStream.connect();
+                        toggleButton.innerHTML = '<i class="fas fa-video-slash me-1"></i>Déconnecter Stream';
+                        toggleButton.className = 'btn btn-warning';
+                    }
+                });
+            }
+            
+            // Auto-connexion
+            videoStream.connect();
+            
+            // Mise à jour périodique des stats
+            setInterval(() => {
+                fetch('/api/v1/video/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        const activeSourcesElement = document.getElementById('active-sources');
+                        const resolutionElement = document.getElementById('resolution');
+                        
+                        if (activeSourcesElement) {
+                            activeSourcesElement.textContent = data.active_sources || 0;
+                        }
+                        
+                        if (resolutionElement && data.capture_active) {
+                            resolutionElement.textContent = '640x480';
+                        }
+                    })
+                    .catch(error => {
+                        console.debug('Erreur status:', error);
+                    });
+            }, 2000);
+            
+            // Nettoyage à la fermeture
+            window.addEventListener('beforeunload', () => {
+                videoStream.disconnect();
+            });
+            
+            // Exposition globale pour debugging
+            window.videoStream = videoStream;
+        });
+    </script>
 </body>
 </html>
