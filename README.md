@@ -11,9 +11,11 @@ Cette application Java/Spring Boot permet de :
   - Des flux RTSP externes (ex: caméras EZVIZ)
   - L'audio du microphone intégré
 
-- **Détecter** une personne spécifique en utilisant le modèle FaceNet du Zoo DL4J
+- **Détecter** la présence d'une personne en utilisant :
+  - **Modèles de présence** (Class0/Class1) : `presence_standard_model.zip` et `presence_yolo_model.zip`
+  - **FaceNet** (reconnaissance faciale spécifique - optionnel)
 
-- **Analyser** l'activité de la personne détectée en utilisant :
+- **Analyser** l'activité de la personne **seulement si une présence est détectée** en utilisant :
   - Les modèles d'activité basés sur les images (Standard, VGG16, ResNet)
   - Les modèles d'activité basés sur le son (Standard, Spectrogramme, MFCC)
   - La fusion des prédictions image + audio
@@ -32,9 +34,15 @@ Cette application Java/Spring Boot permet de :
 - Support des flux RTSP avec reconnexion automatique
 - Capture audio depuis le microphone avec paramètres configurables
 
-### 🧠 Détection d'Activité Intelligente
+### 👤 Détection de Présence Intelligente
+- **Modèles de présence** : Class0 (absence) / Class1 (présence)
+- Support des modèles `presence_standard_model.zip` et `presence_yolo_model.zip`
+- **FaceNet** optionnel pour reconnaissance faciale spécifique
+- Configuration flexible du type de détection
+
+### 🧠 Détection d'Activité Conditionnelle
 - **26 classes d'activité** supportées (voir [CLASSES.md](https://github.com/rbaudu/dl4j-detection-models/blob/main/docs/CLASSES.md))
-- Détection de personne avec FaceNet
+- **Détection d'activité uniquement si une personne est présente**
 - Fusion des modalités image/son pour une meilleure précision
 - Cache des prédictions pour optimiser les performances
 
@@ -42,88 +50,68 @@ Cette application Java/Spring Boot permet de :
 - Dashboard avec contrôles de capture
 - Streaming vidéo en direct via WebSocket
 - Historique des activités détectées
-- Gestion des personnes de référence
+- Indicateur de présence en temps réel
 
 ### 🔌 API REST Complète
 - Endpoints pour démarrer/arrêter la capture
 - Récupération de l'activité courante
 - Accès à l'historique (jour/semaine/mois/période personnalisée)
-- Gestion des images de référence pour la détection de personne
+- Statistiques de détection de présence
 
 ### 💾 Persistance Simple
 - Sauvegarde automatique en fichiers JSON
 - Rotation quotidienne des fichiers d'historique
 - Nettoyage automatique selon la politique de rétention
 
-## Architecture
+## Configuration de la Détection de Présence
 
-Le projet suit une architecture modulaire avec séparation claire des responsabilités :
+### Types de Détection Supportés
 
-```
-com.angel.server.capture/
-├── config/              # Configuration WebSocket et handlers
-├── controller/          # API REST et contrôleurs web
-├── model/              # Modèles de données (ActivityDetection, etc.)
-└── service/            # Logique métier
-    ├── ModelService             # Gestion des modèles DL4J
-    ├── VideoCaptureService      # Capture vidéo
-    ├── AudioCaptureService      # Capture audio  
-    ├── ActivityDetectionService # Détection d'activité
-    ├── PersonDetectionService   # Détection de personne
-    └── HistoryService          # Gestion de l'historique
-```
-
-## Configuration
-
-Toute la configuration est centralisée dans `config/application.properties` :
-
-### Sources de Capture
 ```properties
-# Caméra intégrée
-capture.camera.enabled=true
-capture.camera.device.id=0
-capture.camera.width=640
-capture.camera.height=480
-capture.camera.fps=15
+# Type de détection de personne: 'presence', 'facenet' ou 'disabled'
+person.detection.type=presence
 
-# Microphone
-capture.microphone.enabled=true
-capture.microphone.sample.rate=44100
+# Modèles de présence (Class0=absence, Class1=présence)
+models.presence.standard.path=${models.directory}/presence_standard_model.zip
+models.presence.yolo.path=${models.directory}/presence_yolo_model.zip
+models.presence.default=standard
+models.presence.confidence.threshold=0.6
 
-# Flux RTSP
-capture.rtsp.enabled=false
-capture.rtsp.urls=rtsp://admin:password@192.168.1.100:554/stream1
-```
-
-### Modèles DL4J
-```properties
-# Répertoire des modèles
-models.directory=models
-
-# Modèles d'activité (images)
-models.activity.image.standard.path=${models.directory}/activity_standard_model.zip
-models.activity.image.vgg16.path=${models.directory}/activity_vgg16_model.zip
-models.activity.image.resnet.path=${models.directory}/activity_resnet_model.zip
-
-# Modèles d'activité (son)
-models.activity.sound.spectrogram.path=${models.directory}/sound_spectrogram_model.zip
-models.activity.sound.mfcc.path=${models.directory}/sound_mfcc_model.zip
-```
-
-### Détection d'Activité
-```properties
-# Intervalle de détection (ms)
-detection.interval=2000
-
-# Seuils de confiance
-detection.confidence.threshold=0.6
+# Modèle FaceNet (reconnaissance faciale - optionnel)
+models.facenet.enabled=false
 models.facenet.confidence.threshold=0.7
+models.facenet.faces.directory=faces
 
-# Fusion des prédictions
-detection.fusion.enabled=true
-detection.fusion.image.weight=0.6
-detection.fusion.sound.weight=0.4
+# Nécessiter une présence pour faire la détection d'activité
+detection.require.person.presence=true
 ```
+
+### Modes de Fonctionnement
+
+#### 1. **Mode Présence** (Recommandé)
+```properties
+person.detection.type=presence
+detection.require.person.presence=true
+```
+- Utilise vos modèles `presence_standard_model.zip` ou `presence_yolo_model.zip`
+- Détecte Class0 (absence) vs Class1 (présence)
+- Simple et efficace
+
+#### 2. **Mode FaceNet** (Reconnaissance faciale)
+```properties
+person.detection.type=facenet
+models.facenet.enabled=true
+detection.require.person.presence=true
+```
+- Reconnaît des personnes spécifiques
+- Nécessite des photos de référence dans le dossier `faces/`
+
+#### 3. **Mode Désactivé**
+```properties
+person.detection.type=disabled
+detection.require.person.presence=false
+```
+- Détection d'activité continue sans vérification de présence
 
 ## Installation et Démarrage
 
@@ -131,7 +119,7 @@ detection.fusion.sound.weight=0.4
 - Java 11+
 - Maven 3.6+
 - Caméra et/ou microphone
-- Modèles DL4J entraînés (depuis [dl4j-detection-models](https://github.com/rbaudu/dl4j-detection-models))
+- **Modèles DL4J entraînés** (depuis [dl4j-detection-models](https://github.com/rbaudu/dl4j-detection-models))
 
 ### Installation
 ```bash
@@ -142,14 +130,24 @@ cd dl4j-server-capture
 # Compiler le projet
 mvn clean package
 
-# Copier les modèles DL4J dans le répertoire models/
-# (depuis votre projet dl4j-detection-models)
+# Copier vos modèles DL4J dans le répertoire models/
 mkdir models
-cp /path/to/dl4j-detection-models/models/*.zip models/
+cp /path/to/dl4j-detection-models/models/activity_*.zip models/
+cp /path/to/dl4j-detection-models/models/sound_*.zip models/
+cp /path/to/dl4j-detection-models/models/presence_*.zip models/
+```
 
-# Optionnel: Ajouter des images de référence dans faces/
-mkdir faces
-cp photo_personne.jpg faces/john.jpg
+### Structure des Modèles Attendue
+```
+models/
+├── activity_standard_model.zip    # Modèle d'activité standard (images)
+├── activity_vgg16_model.zip       # Modèle d'activité VGG16 (images)
+├── activity_resnet_model.zip      # Modèle d'activité ResNet (images)
+├── sound_standard_model.zip       # Modèle de son standard
+├── sound_spectrogram_model.zip    # Modèle de son spectrogramme
+├── sound_mfcc_model.zip           # Modèle de son MFCC
+├── presence_standard_model.zip    # Modèle de présence standard ⭐
+└── presence_yolo_model.zip        # Modèle de présence YOLO ⭐
 ```
 
 ### Démarrage
@@ -171,8 +169,9 @@ L'application sera accessible sur http://localhost:8080
 ### Interface Web
 1. Accéder à http://localhost:8080
 2. Utiliser les boutons "Démarrer/Arrêter la Capture"
-3. Visualiser les activités détectées en temps réel
-4. Consulter l'historique dans l'onglet "Historique"
+3. **Observer l'indicateur de présence** en temps réel
+4. Visualiser les activités détectées **seulement quand une personne est présente**
+5. Consulter l'historique dans l'onglet "Historique"
 
 ### API REST
 
@@ -190,36 +189,35 @@ curl http://localhost:8080/api/v1/capture/status
 
 #### Activité Courante
 ```bash
-# Activité actuellement détectée
+# Activité actuellement détectée (seulement si présence)
 curl http://localhost:8080/api/v1/activity/current
 ```
 
-#### Historique
+#### Statistiques de Présence
 ```bash
-# Historique du jour
-curl http://localhost:8080/api/v1/history/today
-
-# Historique de la semaine
-curl http://localhost:8080/api/v1/history/week
-
-# Historique d'une période
-curl "http://localhost:8080/api/v1/history/period?startDate=2025-01-01&endDate=2025-01-31"
-
-# Supprimer l'historique à partir d'une date
-curl -X DELETE http://localhost:8080/api/v1/history/from/2025-01-01
+# Statistiques générales (incluent les stats de présence)
+curl http://localhost:8080/api/v1/stats
 ```
 
-#### Gestion des Personnes
-```bash
-# Lister les personnes de référence
-curl http://localhost:8080/api/v1/person/reference
+## Logique de Fonctionnement
 
-# Ajouter une image de référence
-curl -X POST -F "name=john" -F "image=@photo.jpg" http://localhost:8080/api/v1/person/reference
+### Flux de Détection
 
-# Supprimer une personne de référence
-curl -X DELETE http://localhost:8080/api/v1/person/reference/john
-```
+1. **Capture de Frame** → Caméra/RTSP capture une image
+2. **Détection de Présence** → Le modèle `presence_*.zip` vérifie si Class1 (présence) > seuil
+3. **Condition** :
+   - ✅ **Si présence détectée** → Continuer avec la détection d'activité
+   - ❌ **Si aucune présence** → Ignorer, attendre la prochaine frame
+4. **Détection d'Activité** → Analyser l'activité avec les modèles d'activité
+5. **Fusion** (optionnel) → Combiner image + son
+6. **Résultat** → Envoyer la détection via WebSocket et sauvegarder
+
+### Avantages de cette Approche
+
+✅ **Économie de ressources** : Pas de détection d'activité inutile quand personne n'est là  
+✅ **Précision améliorée** : Évite les faux positifs sur des objets/animaux  
+✅ **Historique pertinent** : Seulement les activités humaines réelles  
+✅ **Flexibilité** : Possibilité de basculer entre différents modes  
 
 ## Classes d'Activité Supportées
 
@@ -239,74 +237,44 @@ L'application reconnaît **26 classes d'activité** différentes :
 
 Voir la liste complète dans [ActivityClass.java](src/main/java/com/angel/server/capture/model/ActivityClass.java).
 
-## Performances et Optimisation
+## Exemple de Configuration Complète
 
-### Configuration Mémoire
 ```properties
-# Optimisation mémoire
-memory.max.heap=4g
-memory.optimization.enabled=true
+# Configuration recommandée pour la détection de présence
+person.detection.type=presence
+models.presence.default=standard
+models.presence.confidence.threshold=0.6
+detection.require.person.presence=true
 
-# Thread pools
-threads.capture.pool.size=4
-threads.detection.pool.size=2
+# Modèles d'activité
+models.activity.image.default=standard
+models.activity.sound.default=spectrogram
 
-# Cache
-cache.models.enabled=true
-cache.predictions.size=100
-cache.predictions.ttl=300
+# Détection et fusion
+detection.interval=2000
+detection.confidence.threshold=0.6
+detection.fusion.enabled=true
+detection.fusion.image.weight=0.6
+detection.fusion.sound.weight=0.4
 ```
 
-### Temps Réel
-- Détection toutes les 2 secondes par défaut
-- Streaming vidéo à 10 FPS via WebSocket
-- Cache des prédictions pour éviter les recalculs
+## Développement et Tests
 
-## Développement
-
-### Structure du Projet
-```
-dl4j-server-capture/
-├── config/                    # Configuration centralisée
-├── src/main/
-│   ├── java/com/angel/server/capture/
-│   │   ├── config/           # Configuration Spring/WebSocket
-│   │   ├── controller/       # REST API et Web
-│   │   ├── model/           # Modèles de données
-│   │   └── service/         # Services métier
-│   ├── resources/
-│   │   ├── static/          # CSS, JS, images
-│   │   └── templates/       # Templates Thymeleaf
-├── models/                   # Modèles DL4J (non versionnés)
-├── faces/                    # Images de référence (non versionnées)
-├── history/                  # Historique JSON (non versionnés)
-└── logs/                     # Logs d'application (non versionnés)
-```
-
-### Tests
+### Test de la Détection de Présence
 ```bash
-# Exécuter les tests
-mvn test
+# Vérifier les modèles disponibles
+curl http://localhost:8080/api/v1/stats | jq '.model_stats.model_availability'
 
-# Tests d'intégration
-mvn verify
+# Observer les logs de détection
+tail -f logs/dl4j-server-capture.log | grep -i "presence\|personne"
 ```
 
-## Dépendances Principales
-
-- **Spring Boot 2.7.18** - Framework web et IoC
-- **DL4J 1.0.0-M2.1** - Deep Learning pour Java
-- **JavaCV 1.5.9** - Traitement vidéo/audio (OpenCV + FFmpeg)
-- **Jackson** - Sérialisation JSON
-- **Thymeleaf** - Templates web
-- **WebSocket** - Communication temps réel
-
-## Limitations Connues
-
-- Les modèles DL4J doivent être pré-entraînés avec [dl4j-detection-models](https://github.com/rbaudu/dl4j-detection-models)
-- La détection de personne nécessite des images de référence de bonne qualité
-- Les flux RTSP peuvent avoir des problèmes de latence selon la configuration réseau
-- La conversion audio MFCC est simplifiée (pour une version production, utiliser une bibliothèque spécialisée)
+### Debug de la Détection
+```properties
+# Activer les logs debug
+logging.level.com.angel.server.capture.service.PresenceDetectionService=DEBUG
+logging.level.com.angel.server.capture.service.ActivityDetectionService=DEBUG
+```
 
 ## Contribution
 
@@ -320,12 +288,6 @@ mvn verify
 
 Ce projet est sous licence Apache 2.0. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
-## Support
-
-Pour les questions et le support :
-- Créer une [issue](https://github.com/rbaudu/dl4j-server-capture/issues)
-- Consulter la documentation du projet [dl4j-detection-models](https://github.com/rbaudu/dl4j-detection-models)
-
 ---
 
-**Note**: Ce projet est conçu pour fonctionner avec les modèles générés par [dl4j-detection-models](https://github.com/rbaudu/dl4j-detection-models). Assurez-vous d'avoir entraîné et exporté vos modèles avant d'utiliser cette application.
+**Note Importante**: Cette application est optimisée pour fonctionner avec vos modèles de présence `presence_standard_model.zip` et `presence_yolo_model.zip`. Elle ne fera la détection d'activité que si une personne est effectivement présente, ce qui améliore les performances et la pertinence des résultats ! 🎯
