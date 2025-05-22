@@ -38,10 +38,10 @@ public class PresenceDetectionService {
     @Value("${models.presence.default}")
     private String defaultPresenceModel;
 
-    @Value("${detection.image.width}")
+    @Value("${detection.presence.image.width:101}")
     private int imageWidth;
 
-    @Value("${detection.image.height}")
+    @Value("${detection.presence.image.height:101}")
     private int imageHeight;
 
     // Statistiques
@@ -58,6 +58,7 @@ public class PresenceDetectionService {
         logger.info("Initialisation du service de détection de présence...");
         logger.info("Seuil de confiance configuré: {}", confidenceThreshold);
         logger.info("Modèle par défaut: {}", defaultPresenceModel);
+        logger.info("Dimensions d'image pour présence: {}x{}", imageWidth, imageHeight);
         logger.info("Service de détection de présence initialisé");
     }
 
@@ -81,15 +82,19 @@ public class PresenceDetectionService {
                 return Optional.empty();
             }
 
-            // Préprocesser l'image
+            // Préprocesser l'image avec les bonnes dimensions
             BufferedImage preprocessed = preprocessImage(image);
             INDArray input = imageToINDArray(preprocessed);
+
+            logger.debug("Input shape pour détection de présence: {}", java.util.Arrays.toString(input.shape()));
 
             // Faire la prédiction
             INDArray output = presenceModel.output(input);
             
             // Interpréter les résultats (Class0 = absence, Class1 = présence)
             double[] predictions = output.toDoubleVector();
+            
+            logger.debug("Prédictions brutes: {}", java.util.Arrays.toString(predictions));
             
             // Pour un modèle binaire, on s'attend à 2 classes
             if (predictions.length >= 2) {
@@ -166,7 +171,7 @@ public class PresenceDetectionService {
      * Préprocesse une image pour la détection de présence
      */
     private BufferedImage preprocessImage(BufferedImage original) {
-        // Redimensionner à la taille attendue par le modèle
+        // Redimensionner à la taille exacte attendue par le modèle de présence
         BufferedImage resized = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_RGB);
         
         Graphics2D g2d = resized.createGraphics();
@@ -222,6 +227,7 @@ public class PresenceDetectionService {
         stats.put("success_rate", totalDetections > 0 ? 
             (double) successfulDetections / totalDetections : 0.0);
         stats.put("confidence_threshold", confidenceThreshold);
+        stats.put("image_dimensions", imageWidth + "x" + imageHeight);
         
         // Vérifier la disponibilité des modèles
         Map<String, Boolean> modelAvailability = new HashMap<>();
