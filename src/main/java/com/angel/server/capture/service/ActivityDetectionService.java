@@ -14,13 +14,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
-import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.*;
@@ -34,6 +29,7 @@ import java.util.function.Consumer;
 /**
  * Service principal de détection d'activité
  * Combine les détections d'images et de sons pour déterminer l'activité en cours
+ * Ne fait la détection que si une personne est présente
  */
 @Service
 public class ActivityDetectionService {
@@ -51,6 +47,9 @@ public class ActivityDetectionService {
 
     @Autowired
     private PersonDetectionService personDetectionService;
+
+    @Autowired
+    private PresenceDetectionService presenceDetectionService;
 
     // Configuration depuis application.properties
     @Value("${detection.interval}")
@@ -83,6 +82,12 @@ public class ActivityDetectionService {
     @Value("${cache.predictions.ttl}")
     private int predictionCacheTTL;
 
+    @Value("${detection.require.person.presence:true}")
+    private boolean requirePersonPresence;
+
+    @Value("${person.detection.type}")
+    private String personDetectionType;
+
     // État du service
     private volatile boolean isDetecting = false;
     private ScheduledExecutorService detectionExecutor;
@@ -108,6 +113,8 @@ public class ActivityDetectionService {
         videoCaptureService.addFrameListener(this::onFrameReceived);
         audioCaptureService.addAudioListener(this::onAudioReceived);
         
+        logger.info("Détection d'activité configurée - Nécessite présence: {}, Type de détection: {}", 
+                   requirePersonPresence, personDetectionType);
         logger.info("Service de détection d'activité initialisé");
     }
 
@@ -216,17 +223,21 @@ public class ActivityDetectionService {
             boolean personDetected = false;
             double personConfidence = 0.0;
 
-            if (currentFrame != null) {
-                var personResult = personDetectionService.detectPerson(currentFrame);
+            if (currentFrame != null && requirePersonPresence) {
+                var personResult = detectPerson(currentFrame);
                 personDetected = personResult.isPresent();
                 if (personDetected) {
                     personConfidence = personResult.get();
                     logger.debug("Personne détectée avec confiance: {}", personConfidence);
                 }
+            } else if (!requirePersonPresence) {
+                // Si la détection de personne n'est pas requise, continuer
+                personDetected = true;
+                personConfidence = 1.0;
             }
 
-            // Si aucune personne n'est détectée, pas besoin de continuer
-            if (!personDetected) {
+            // Si aucune personne n'est détectée et qu'elle est requise, pas de détection d'activité
+            if (!personDetected && requirePersonPresence) {
                 logger.debug("Aucune personne détectée, ignorer la détection d'activité");
                 return;
             }
@@ -257,6 +268,21 @@ public class ActivityDetectionService {
 
         } catch (Exception e) {
             logger.error("Erreur lors de la détection d'activité: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Détecte la présence d'une personne selon la configuration
+     */
+    private Optional<Double> detectPerson(BufferedImage frame) {
+        switch (personDetectionType.toLowerCase()) {
+            case "presence":
+                return presenceDetectionService.detectPresence(frame);
+            case "facenet":
+                return personDetectionService.detectPerson(frame);
+            case "disabled":
+            default:
+                return Optional.empty();
         }
     }
 
@@ -567,6 +593,8 @@ public class ActivityDetectionService {
         stats.put("prediction_cache_size", predictionCache.size());
         stats.put("last_detection", lastDetection);
         stats.put("detection_listeners_count", detectionListeners.size());
+        stats.put("require_person_presence", requirePersonPresence);
+        stats.put("person_detection_type", personDetectionType);
         return stats;
     }
 
