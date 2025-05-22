@@ -2,10 +2,6 @@ package com.angel.server.capture.service;
 
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.util.ModelSerializer;
-import org.deeplearning4j.zoo.PretrainedType;
-import org.deeplearning4j.zoo.ZooModel;
-import org.deeplearning4j.zoo.model.FaceNetNN4Small2;
-import org.nd4j.linalg.api.ndarray.INDArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -75,9 +71,11 @@ public class ModelService {
             logger.warn("Répertoire des modèles créé: {}", modelsDirectory);
         }
         
-        // Initialiser FaceNet si activé
+        // Initialiser FaceNet si activé (désactivé temporairement à cause du problème de poids pré-entraînés)
         if (faceNetEnabled) {
-            initializeFaceNet();
+            logger.info("FaceNet activé dans la configuration mais temporairement désactivé");
+            logger.info("Pour utiliser FaceNet, vous devez avoir un modèle FaceNet pré-entraîné local");
+            faceNetEnabled = false; // Désactiver temporairement
         }
         
         logger.info("Service de modèles initialisé");
@@ -149,21 +147,6 @@ public class ModelService {
         } catch (Exception e) {
             logger.error("Erreur lors du chargement du modèle {}: {}", modelPath, e.getMessage());
             return null;
-        }
-    }
-
-    /**
-     * Initialise le modèle FaceNet depuis le Zoo DL4J
-     */
-    private void initializeFaceNet() {
-        try {
-            logger.info("Initialisation de FaceNet...");
-            ZooModel zooModel = FaceNetNN4Small2.builder().build();
-            faceNetModel = (MultiLayerNetwork) zooModel.initPretrained(PretrainedType.IMAGENET);
-            logger.info("FaceNet initialisé avec succès");
-        } catch (Exception e) {
-            logger.error("Erreur lors de l'initialisation de FaceNet: {}", e.getMessage());
-            faceNetEnabled = false;
         }
     }
 
