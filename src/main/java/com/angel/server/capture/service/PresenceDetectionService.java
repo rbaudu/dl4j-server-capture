@@ -48,6 +48,9 @@ public class PresenceDetectionService {
     @Value("${detection.presence.image.height:101}")
     private int imageHeight;
 
+    @Value("${detection.presence.preprocessing.channels:64}")
+    private int expectedChannels;
+
     @Value("${detection.presence.normalization:standard}")
     private String normalizationType;
 
@@ -69,6 +72,7 @@ public class PresenceDetectionService {
         logger.info("Seuil de confiance configuré: {}", confidenceThreshold);
         logger.info("Modèle par défaut: {}", defaultPresenceModel);
         logger.info("Dimensions d'image pour présence: {}x{}", imageWidth, imageHeight);
+        logger.info("Canaux attendus: {}", expectedChannels);
         logger.info("Type de normalisation: {}", normalizationType);
         logger.info("Debug activé: {}", debugEnabled);
         logger.info("Service de détection de présence initialisé");
@@ -110,14 +114,15 @@ public class PresenceDetectionService {
                            input.meanNumber().floatValue());
             }
             
-            // Vérifier que les dimensions correspondent (3 canaux RGB maintenant)
-            long[] expectedShape = {1, 3, imageHeight, imageWidth};
+            // Vérifier que les dimensions correspondent (64 canaux maintenant)
+            long[] expectedShape = {1, expectedChannels, imageHeight, imageWidth};
             if (!Arrays.equals(input.shape(), expectedShape)) {
                 logger.error("Dimensions d'entrée incorrectes. Attendu: {}, Reçu: {}", 
                            Arrays.toString(expectedShape), Arrays.toString(input.shape()));
                 
                 // Debug supplémentaire en cas de problème
                 if (debugEnabled) {
+                    logger.error("Configuration preprocessing: {}", preprocessingService.getConfigurationInfo());
                     preprocessingService.debugPreprocessing(image);
                 }
                 return Optional.empty();
@@ -159,12 +164,13 @@ public class PresenceDetectionService {
             }
 
         } catch (Exception e) {
-            logger.error("Erreur lors de la détection de présence: {}", e.getMessage(), e);
+            logger.error("Erreur lors de la détection de présence: {}", e.getMessage());
             
             // Debug supplémentaire en cas d'erreur
             if (debugEnabled) {
                 logger.error("Stack trace complète:", e);
                 try {
+                    logger.info("Configuration preprocessing: {}", preprocessingService.getConfigurationInfo());
                     preprocessingService.debugPreprocessing(image);
                 } catch (Exception debugException) {
                     logger.error("Erreur lors du debug: {}", debugException.getMessage());
@@ -189,7 +195,7 @@ public class PresenceDetectionService {
         }
 
         // Si échec, tester différentes normalisations
-        String[] normalizationTypes = {"standard", "normalized", "imagenet"};
+        String[] normalizationTypes = {"standard", "normalized", "standardized"};
         for (String normType : normalizationTypes) {
             if (!normType.equals(normalizationType)) {
                 try {
@@ -215,7 +221,7 @@ public class PresenceDetectionService {
                 
                 for (String normType : normalizationTypes) {
                     INDArray input = preprocessingService.preprocessWithNormalization(image, normType);
-                    if (input != null) {
+                    if (input != null && Arrays.equals(input.shape(), new long[]{1, expectedChannels, imageHeight, imageWidth})) {
                         INDArray output = alternativePresenceModel.output(input);
                         double[] predictions = output.toDoubleVector();
                         
@@ -253,6 +259,14 @@ public class PresenceDetectionService {
                 return Optional.empty();
             }
 
+            // Vérifier les dimensions
+            long[] expectedShape = {1, expectedChannels, imageHeight, imageWidth};
+            if (!Arrays.equals(input.shape(), expectedShape)) {
+                logger.debug("Dimensions incorrectes pour normalisation {}: attendu {}, reçu {}", 
+                           normType, Arrays.toString(expectedShape), Arrays.toString(input.shape()));
+                return Optional.empty();
+            }
+
             INDArray output = presenceModel.output(input);
             double[] predictions = output.toDoubleVector();
 
@@ -286,7 +300,7 @@ public class PresenceDetectionService {
     }
 
     /**
-     * Convertit une image en INDArray pour DL4J (méthode legacy)
+     * Convertit une image en INDArray pour DL4J (méthode legacy - 3 canaux)
      */
     private INDArray imageToINDArray(BufferedImage image) {
         int width = image.getWidth();
@@ -331,6 +345,7 @@ public class PresenceDetectionService {
             (double) successfulDetections / totalDetections : 0.0);
         stats.put("confidence_threshold", confidenceThreshold);
         stats.put("image_dimensions", imageWidth + "x" + imageHeight);
+        stats.put("expected_channels", expectedChannels);
         stats.put("normalization_type", normalizationType);
         stats.put("debug_enabled", debugEnabled);
         
@@ -339,6 +354,9 @@ public class PresenceDetectionService {
         modelAvailability.put("standard_model", modelService.isModelAvailable("standard", "presence"));
         modelAvailability.put("yolo_model", modelService.isModelAvailable("yolo", "presence"));
         stats.put("model_availability", modelAvailability);
+        
+        // Informations de configuration du preprocessing
+        stats.put("preprocessing_config", preprocessingService.getConfigurationInfo());
         
         return stats;
     }
@@ -374,5 +392,41 @@ public class PresenceDetectionService {
         totalDetections = 0;
         successfulDetections = 0;
         logger.info("Statistiques de détection de présence remises à zéro");
+    }
+
+    /**
+     * Test de configuration - à utiliser pour diagnostiquer les problèmes
+     */
+    public void testConfiguration(BufferedImage testImage) {
+        logger.info("=== TEST DE CONFIGURATION ===");
+        logger.info("Configuration du service:");
+        logger.info("- Type de détection: {}", personDetectionType);
+        logger.info("- Modèle par défaut: {}", defaultPresenceModel);
+        logger.info("- Dimensions attendues: {}x{}", imageWidth, imageHeight);
+        logger.info("- Canaux attendus: {}", expectedChannels);
+        logger.info("- Normalisation: {}", normalizationType);
+        logger.info("- Seuil de confiance: {}", confidenceThreshold);
+        
+        if (testImage != null) {
+            logger.info("Test avec image {}x{}", testImage.getWidth(), testImage.getHeight());
+            preprocessingService.debugPreprocessing(testImage);
+        }
+        
+        // Test de disponibilité des modèles
+        MultiLayerNetwork model = modelService.getDefaultPresenceModel();
+        logger.info("Modèle par défaut disponible: {}", model != null);
+        
+        if (model != null) {
+            logger.info("Configuration du modèle:");
+            try {
+                // Afficher des informations sur le modèle si possible
+                logger.info("- Nombre de couches: {}", model.getnLayers());
+                logger.info("- Configuration d'entrée: {}", model.getLayerWiseConfigurations().getInputPreProcess(0));
+            } catch (Exception e) {
+                logger.warn("Impossible d'analyser la configuration du modèle: {}", e.getMessage());
+            }
+        }
+        
+        logger.info("=== FIN TEST CONFIGURATION ===");
     }
 }
