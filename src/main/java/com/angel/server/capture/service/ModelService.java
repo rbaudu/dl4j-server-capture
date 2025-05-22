@@ -26,6 +26,7 @@ public class ModelService {
     @Value("${models.directory}")
     private String modelsDirectory;
 
+    // Modèles d'activité
     @Value("${models.activity.image.standard.path}")
     private String activityImageStandardPath;
 
@@ -50,6 +51,24 @@ public class ModelService {
     @Value("${models.activity.sound.default}")
     private String defaultSoundModel;
 
+    // Modèles de présence
+    @Value("${models.presence.standard.path}")
+    private String presenceStandardPath;
+
+    @Value("${models.presence.yolo.path}")
+    private String presenceYoloPath;
+
+    @Value("${models.presence.default}")
+    private String defaultPresenceModel;
+
+    @Value("${models.presence.confidence.threshold}")
+    private double presenceConfidenceThreshold;
+
+    // Configuration de détection de personne
+    @Value("${person.detection.type}")
+    private String personDetectionType;
+
+    // FaceNet (pour compatibilité)
     @Value("${models.facenet.enabled}")
     private boolean faceNetEnabled;
 
@@ -71,14 +90,46 @@ public class ModelService {
             logger.warn("Répertoire des modèles créé: {}", modelsDirectory);
         }
         
-        // Initialiser FaceNet si activé (désactivé temporairement à cause du problème de poids pré-entraînés)
-        if (faceNetEnabled) {
-            logger.info("FaceNet activé dans la configuration mais temporairement désactivé");
-            logger.info("Pour utiliser FaceNet, vous devez avoir un modèle FaceNet pré-entraîné local");
-            faceNetEnabled = false; // Désactiver temporairement
+        // Initialiser selon le type de détection de personne configuré
+        switch (personDetectionType.toLowerCase()) {
+            case "presence":
+                logger.info("Configuration pour détection de présence avec modèles Class0/Class1");
+                initializePresenceModels();
+                break;
+            case "facenet":
+                logger.info("Configuration pour détection FaceNet (reconnaissance faciale)");
+                if (faceNetEnabled) {
+                    logger.warn("FaceNet non implémenté dans cette version");
+                }
+                break;
+            case "disabled":
+                logger.info("Détection de personne désactivée");
+                break;
+            default:
+                logger.warn("Type de détection de personne inconnu: {}. Utilisation de 'presence' par défaut", personDetectionType);
+                personDetectionType = "presence";
+                initializePresenceModels();
+                break;
         }
         
         logger.info("Service de modèles initialisé");
+    }
+
+    /**
+     * Initialise les modèles de présence
+     */
+    private void initializePresenceModels() {
+        // Vérifier que les modèles de présence existent
+        File standardModel = new File(presenceStandardPath);
+        File yoloModel = new File(presenceYoloPath);
+        
+        if (!standardModel.exists() && !yoloModel.exists()) {
+            logger.warn("Aucun modèle de présence trouvé. Vérifiez que {} ou {} existent", 
+                       presenceStandardPath, presenceYoloPath);
+        } else {
+            logger.info("Modèles de présence disponibles - Standard: {}, YOLO: {}", 
+                       standardModel.exists(), yoloModel.exists());
+        }
     }
 
     /**
@@ -122,7 +173,34 @@ public class ModelService {
     }
 
     /**
-     * Retourne le modèle FaceNet pour la détection de personnes
+     * Charge le modèle de présence
+     */
+    public MultiLayerNetwork getPresenceModel(String modelType) {
+        String cacheKey = "presence_" + modelType;
+        
+        if (cacheEnabled && modelCache.containsKey(cacheKey)) {
+            return modelCache.get(cacheKey);
+        }
+        
+        String modelPath = getPresenceModelPath(modelType);
+        MultiLayerNetwork model = loadModel(modelPath);
+        
+        if (cacheEnabled && model != null) {
+            modelCache.put(cacheKey, model);
+        }
+        
+        return model;
+    }
+
+    /**
+     * Retourne le modèle de présence par défaut
+     */
+    public MultiLayerNetwork getDefaultPresenceModel() {
+        return getPresenceModel(defaultPresenceModel);
+    }
+
+    /**
+     * Retourne le modèle FaceNet pour la détection de personnes (compatibilité)
      */
     public MultiLayerNetwork getFaceNetModel() {
         return faceNetModel;
@@ -181,6 +259,19 @@ public class ModelService {
     }
 
     /**
+     * Retourne le chemin du modèle de présence
+     */
+    private String getPresenceModelPath(String modelType) {
+        switch (modelType.toLowerCase()) {
+            case "yolo":
+                return presenceYoloPath;
+            case "standard":
+            default:
+                return presenceStandardPath;
+        }
+    }
+
+    /**
      * Retourne le modèle d'image par défaut
      */
     public MultiLayerNetwork getDefaultActivityImageModel() {
@@ -199,15 +290,49 @@ public class ModelService {
      */
     public boolean isModelAvailable(String modelType, String category) {
         String modelPath;
-        if ("image".equals(category)) {
-            modelPath = getActivityImageModelPath(modelType);
-        } else if ("sound".equals(category)) {
-            modelPath = getActivitySoundModelPath(modelType);
-        } else {
-            return false;
+        switch (category.toLowerCase()) {
+            case "image":
+                modelPath = getActivityImageModelPath(modelType);
+                break;
+            case "sound":
+                modelPath = getActivitySoundModelPath(modelType);
+                break;
+            case "presence":
+                modelPath = getPresenceModelPath(modelType);
+                break;
+            default:
+                return false;
         }
         
         return new File(modelPath).exists();
+    }
+
+    /**
+     * Retourne le type de détection de personne configuré
+     */
+    public String getPersonDetectionType() {
+        return personDetectionType;
+    }
+
+    /**
+     * Vérifie si la détection de présence est activée
+     */
+    public boolean isPresenceDetectionEnabled() {
+        return "presence".equalsIgnoreCase(personDetectionType);
+    }
+
+    /**
+     * Vérifie si FaceNet est activé
+     */
+    public boolean isFaceNetEnabled() {
+        return "facenet".equalsIgnoreCase(personDetectionType) && faceNetEnabled;
+    }
+
+    /**
+     * Retourne le seuil de confiance pour la présence
+     */
+    public double getPresenceConfidenceThreshold() {
+        return presenceConfidenceThreshold;
     }
 
     /**
@@ -217,16 +342,23 @@ public class ModelService {
         Map<String, Object> stats = new HashMap<>();
         stats.put("cache_enabled", cacheEnabled);
         stats.put("cached_models_count", modelCache.size());
-        stats.put("facenet_enabled", faceNetEnabled);
+        stats.put("person_detection_type", personDetectionType);
+        stats.put("facenet_enabled", isFaceNetEnabled());
         stats.put("facenet_loaded", faceNetModel != null);
+        stats.put("presence_detection_enabled", isPresenceDetectionEnabled());
         
         Map<String, Boolean> availability = new HashMap<>();
+        // Modèles d'activité
         availability.put("activity_image_standard", isModelAvailable("standard", "image"));
         availability.put("activity_image_vgg16", isModelAvailable("vgg16", "image"));
         availability.put("activity_image_resnet", isModelAvailable("resnet", "image"));
         availability.put("activity_sound_standard", isModelAvailable("standard", "sound"));
         availability.put("activity_sound_spectrogram", isModelAvailable("spectrogram", "sound"));
         availability.put("activity_sound_mfcc", isModelAvailable("mfcc", "sound"));
+        
+        // Modèles de présence
+        availability.put("presence_standard", isModelAvailable("standard", "presence"));
+        availability.put("presence_yolo", isModelAvailable("yolo", "presence"));
         
         stats.put("model_availability", availability);
         
