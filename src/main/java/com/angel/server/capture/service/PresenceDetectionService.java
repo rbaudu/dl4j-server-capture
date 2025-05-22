@@ -48,9 +48,6 @@ public class PresenceDetectionService {
     @Value("${detection.presence.image.height:101}")
     private int imageHeight;
 
-    @Value("${detection.presence.preprocessing.channels:64}")
-    private int expectedChannels;
-
     @Value("${detection.presence.normalization:standard}")
     private String normalizationType;
 
@@ -72,7 +69,7 @@ public class PresenceDetectionService {
         logger.info("Seuil de confiance configuré: {}", confidenceThreshold);
         logger.info("Modèle par défaut: {}", defaultPresenceModel);
         logger.info("Dimensions d'image pour présence: {}x{}", imageWidth, imageHeight);
-        logger.info("Canaux attendus: {}", expectedChannels);
+        logger.info("Canaux attendus: 3 (RGB)");
         logger.info("Type de normalisation: {}", normalizationType);
         logger.info("Debug activé: {}", debugEnabled);
         logger.info("Service de détection de présence initialisé");
@@ -114,8 +111,8 @@ public class PresenceDetectionService {
                            input.meanNumber().floatValue());
             }
             
-            // Vérifier que les dimensions correspondent (64 canaux maintenant)
-            long[] expectedShape = {1, expectedChannels, imageHeight, imageWidth};
+            // Vérifier que les dimensions correspondent (3 canaux RGB)
+            long[] expectedShape = {1, 3, imageHeight, imageWidth};
             if (!Arrays.equals(input.shape(), expectedShape)) {
                 logger.error("Dimensions d'entrée incorrectes. Attendu: {}, Reçu: {}", 
                            Arrays.toString(expectedShape), Arrays.toString(input.shape()));
@@ -195,7 +192,7 @@ public class PresenceDetectionService {
         }
 
         // Si échec, tester différentes normalisations
-        String[] normalizationTypes = {"standard", "normalized", "standardized"};
+        String[] normalizationTypes = {"standard", "normalized", "imagenet"};
         for (String normType : normalizationTypes) {
             if (!normType.equals(normalizationType)) {
                 try {
@@ -221,7 +218,7 @@ public class PresenceDetectionService {
                 
                 for (String normType : normalizationTypes) {
                     INDArray input = preprocessingService.preprocessWithNormalization(image, normType);
-                    if (input != null && Arrays.equals(input.shape(), new long[]{1, expectedChannels, imageHeight, imageWidth})) {
+                    if (input != null && Arrays.equals(input.shape(), new long[]{1, 3, imageHeight, imageWidth})) {
                         INDArray output = alternativePresenceModel.output(input);
                         double[] predictions = output.toDoubleVector();
                         
@@ -259,8 +256,8 @@ public class PresenceDetectionService {
                 return Optional.empty();
             }
 
-            // Vérifier les dimensions
-            long[] expectedShape = {1, expectedChannels, imageHeight, imageWidth};
+            // Vérifier les dimensions (3 canaux RGB)
+            long[] expectedShape = {1, 3, imageHeight, imageWidth};
             if (!Arrays.equals(input.shape(), expectedShape)) {
                 logger.debug("Dimensions incorrectes pour normalisation {}: attendu {}, reçu {}", 
                            normType, Arrays.toString(expectedShape), Arrays.toString(input.shape()));
@@ -345,7 +342,7 @@ public class PresenceDetectionService {
             (double) successfulDetections / totalDetections : 0.0);
         stats.put("confidence_threshold", confidenceThreshold);
         stats.put("image_dimensions", imageWidth + "x" + imageHeight);
-        stats.put("expected_channels", expectedChannels);
+        stats.put("expected_channels", 3);
         stats.put("normalization_type", normalizationType);
         stats.put("debug_enabled", debugEnabled);
         
@@ -403,7 +400,7 @@ public class PresenceDetectionService {
         logger.info("- Type de détection: {}", personDetectionType);
         logger.info("- Modèle par défaut: {}", defaultPresenceModel);
         logger.info("- Dimensions attendues: {}x{}", imageWidth, imageHeight);
-        logger.info("- Canaux attendus: {}", expectedChannels);
+        logger.info("- Canaux attendus: 3 (RGB)");
         logger.info("- Normalisation: {}", normalizationType);
         logger.info("- Seuil de confiance: {}", confidenceThreshold);
         
