@@ -304,12 +304,12 @@
             connect() {
                 try {
                     this.updateStatus('Connexion...', 'connecting');
-                    console.log('Connexion WebSocket à:', this.websocketUrl);
+                    console.log('[VideoStream] Connexion WebSocket à:', this.websocketUrl);
                     
                     this.websocket = new WebSocket(this.websocketUrl);
                     
                     this.websocket.onopen = () => {
-                        console.log('WebSocket connecté');
+                        console.log('[VideoStream] WebSocket connecté');
                         this.isConnected = true;
                         this.reconnectAttempts = 0;
                         this.updateStatus('Connecté', 'connected');
@@ -321,28 +321,32 @@
                             const message = JSON.parse(event.data);
                             this.handleMessage(message);
                         } catch (e) {
-                            console.warn('Message WebSocket non-JSON:', event.data);
+                            console.debug('[VideoStream] Message non-JSON reçu');
                         }
                     };
                     
                     this.websocket.onclose = (event) => {
-                        console.log('WebSocket fermé:', event.code, event.reason);
+                        console.log('[VideoStream] WebSocket fermé:', event.code, event.reason);
                         this.isConnected = false;
                         this.updateStatus('Déconnecté', 'disconnected');
                         this.hideVideo();
                         this.stopHeartbeat();
-                        this.attemptReconnect();
+                        
+                        // Reconnexion automatique seulement si pas fermé volontairement
+                        if (event.code !== 1000) {
+                            this.attemptReconnect();
+                        }
                     };
                     
                     this.websocket.onerror = (error) => {
-                        console.error('Erreur WebSocket:', error);
+                        console.error('[VideoStream] Erreur WebSocket:', error);
                         this.isConnected = false;
                         this.updateStatus('Erreur', 'error');
                         this.hideVideo();
                     };
                     
                 } catch (error) {
-                    console.error('Erreur lors de la création du WebSocket:', error);
+                    console.error('[VideoStream] Erreur création WebSocket:', error);
                     this.updateStatus('Erreur de connexion', 'error');
                     this.attemptReconnect();
                 }
@@ -351,7 +355,7 @@
             handleMessage(message) {
                 switch (message.type) {
                     case 'connected':
-                        console.log('Bienvenue:', message.message);
+                        console.log('[VideoStream] Bienvenue:', message.message);
                         break;
                         
                     case 'frame':
@@ -360,15 +364,16 @@
                         break;
                         
                     case 'status':
-                        console.log('Statut capture:', message.capturing);
+                        console.log('[VideoStream] Statut capture:', message.capturing);
                         break;
                 }
             }
             
             displayFrame(base64Data) {
-                if (this.videoElement) {
+                if (this.videoElement && base64Data) {
                     this.videoElement.src = base64Data;
                     this.videoElement.style.display = 'block';
+                    
                     if (this.placeholderElement) {
                         this.placeholderElement.style.display = 'none';
                     }
@@ -378,13 +383,19 @@
             hideVideo() {
                 if (this.videoElement) {
                     this.videoElement.style.display = 'none';
+                    this.videoElement.src = '';
                 }
+                
                 if (this.placeholderElement) {
                     this.placeholderElement.style.display = 'flex';
                 }
+                
                 if (this.fpsElement) {
                     this.fpsElement.textContent = '0';
                 }
+                
+                this.frameCount = 0;
+                this.currentFps = 0;
             }
             
             updateFps() {
@@ -411,7 +422,7 @@
             
             startHeartbeat() {
                 this.heartbeatInterval = setInterval(() => {
-                    if (this.isConnected && this.websocket.readyState === WebSocket.OPEN) {
+                    if (this.isConnected && this.websocket && this.websocket.readyState === WebSocket.OPEN) {
                         this.websocket.send('ping');
                     }
                 }, this.heartbeatDelay);
@@ -430,26 +441,30 @@
                     const delay = this.reconnectDelay * this.reconnectAttempts;
                     
                     this.updateStatus(`Reconnexion ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`, 'connecting');
-                    console.log(`Reconnexion ${this.reconnectAttempts}/${this.maxReconnectAttempts} dans ${delay}ms`);
+                    console.log(`[VideoStream] Reconnexion ${this.reconnectAttempts}/${this.maxReconnectAttempts} dans ${delay}ms`);
                     
                     setTimeout(() => {
                         this.connect();
                     }, delay);
                 } else {
-                    console.error('Impossible de se reconnecter');
+                    console.error('[VideoStream] Impossible de se reconnecter après plusieurs tentatives');
                     this.updateStatus('Connexion échouée', 'error');
                 }
             }
             
             disconnect() {
+                console.log('[VideoStream] Déconnexion manuelle');
                 this.stopHeartbeat();
+                
                 if (this.websocket) {
-                    this.websocket.close();
+                    this.websocket.close(1000, 'Déconnexion manuelle'); // Code 1000 = fermeture normale
                     this.websocket = null;
-                    this.isConnected = false;
-                    this.updateStatus('Déconnecté', 'disconnected');
-                    this.hideVideo();
                 }
+                
+                this.isConnected = false;
+                this.updateStatus('Déconnecté', 'disconnected');
+                this.hideVideo();
+                this.reconnectAttempts = this.maxReconnectAttempts; // Empêcher la reconnexion auto
             }
             
             get connected() {
@@ -481,7 +496,41 @@
                 });
             }
             
-            // Auto-connexion
+            // Boutons de capture
+            const startCaptureBtn = document.getElementById('start-capture');
+            const stopCaptureBtn = document.getElementById('stop-capture');
+            
+            if (startCaptureBtn) {
+                startCaptureBtn.addEventListener('click', () => {
+                    fetch('/api/v1/video/start', { method: 'GET' })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('[Dashboard] Capture démarrée:', data);
+                            startCaptureBtn.disabled = true;
+                            stopCaptureBtn.disabled = false;
+                        })
+                        .catch(error => {
+                            console.error('[Dashboard] Erreur démarrage capture:', error);
+                        });
+                });
+            }
+            
+            if (stopCaptureBtn) {
+                stopCaptureBtn.addEventListener('click', () => {
+                    fetch('/api/v1/video/stop', { method: 'GET' })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('[Dashboard] Capture arrêtée:', data);
+                            startCaptureBtn.disabled = false;
+                            stopCaptureBtn.disabled = true;
+                        })
+                        .catch(error => {
+                            console.error('[Dashboard] Erreur arrêt capture:', error);
+                        });
+                });
+            }
+            
+            // Auto-connexion du stream
             videoStream.connect();
             
             // Mise à jour périodique des stats
@@ -491,6 +540,7 @@
                     .then(data => {
                         const activeSourcesElement = document.getElementById('active-sources');
                         const resolutionElement = document.getElementById('resolution');
+                        const videoStatusElement = document.getElementById('video-status');
                         
                         if (activeSourcesElement) {
                             activeSourcesElement.textContent = data.active_sources || 0;
@@ -499,9 +549,19 @@
                         if (resolutionElement && data.capture_active) {
                             resolutionElement.textContent = '640x480';
                         }
+                        
+                        if (videoStatusElement) {
+                            if (data.capture_active) {
+                                videoStatusElement.innerHTML = '<i class="fas fa-video me-1"></i>Vidéo: Active';
+                                videoStatusElement.className = 'badge bg-success';
+                            } else {
+                                videoStatusElement.innerHTML = '<i class="fas fa-video me-1"></i>Vidéo: Arrêtée';
+                                videoStatusElement.className = 'badge bg-secondary';
+                            }
+                        }
                     })
                     .catch(error => {
-                        console.debug('Erreur status:', error);
+                        console.debug('[Dashboard] Erreur status:', error);
                     });
             }, 2000);
             
